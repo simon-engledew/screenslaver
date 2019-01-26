@@ -27,11 +27,17 @@
 #ifndef EPD5IN83_H
 #define EPD5IN83_H
 
-#include "epdif.h"
+#include <arduino.h>
 
 // Display resolution
 #define EPD_WIDTH       600
 #define EPD_HEIGHT      448
+
+// Pin definitino
+#define RST_PIN         0
+#define DC_PIN          4
+#define CS_PIN          5
+#define BUSY_PIN        2
 
 // EPD7IN5 commands
 #define PANEL_SETTING                               0x00
@@ -72,7 +78,7 @@
 #define READ_VCOM_VALUE                             0x81
 #define VCM_DC_SETTING                              0x82
 
-class Epd : EpdIf {
+class Epd {
 public:
     Epd();
     ~Epd();
@@ -80,11 +86,16 @@ public:
     void WaitUntilIdle(void);
     void Reset(void);
     void SetLut(void);
-    void DisplayFrame(const unsigned char* frame_buffer);
+    void DisplayStream(Stream* stream);
     void SendCommand(unsigned char command);
     void SendData(unsigned char data);
+    int Size(void);
     void Clear(void);
     void Sleep(void);
+
+    static void DigitalWrite(int pin, int value);
+    static int  DigitalRead(int pin);
+    static void SpiTransfer(unsigned char data);
 private:
     unsigned int reset_pin;
     unsigned int dc_pin;

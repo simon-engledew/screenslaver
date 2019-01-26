@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include "epd5in83.h"
+#include <spi.h>
 
 Epd::~Epd() {
 };
@@ -40,9 +41,14 @@ Epd::Epd() {
 };
 
 int Epd::Init(void) {
-  if (IfInit() != 0) {
-    return -1;
-  }
+  pinMode(cs_pin, OUTPUT);
+  pinMode(reset_pin, OUTPUT);
+  pinMode(dc_pin, OUTPUT);
+  pinMode(busy_pin, INPUT);
+
+  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  SPI.begin();
+
   Reset();
 
   SendCommand(POWER_SETTING);
@@ -88,110 +94,117 @@ int Epd::Init(void) {
   return 0;
 }
 
-/**
-    @brief: basic function for sending commands
-*/
+void Epd::DigitalWrite(int pin, int value) {
+    digitalWrite(pin, value);
+}
+
+int Epd::DigitalRead(int pin) {
+    return digitalRead(pin);
+}
+
+void Epd::SpiTransfer(unsigned char data) {
+    digitalWrite(CS_PIN, LOW);
+    SPI.transfer(data);
+    digitalWrite(CS_PIN, HIGH);
+}
+
 void Epd::SendCommand(unsigned char command) {
   DigitalWrite(dc_pin, LOW);
   SpiTransfer(command);
 }
 
-/**
-    @brief: basic function for sending data
-*/
 void Epd::SendData(unsigned char data) {
   DigitalWrite(dc_pin, HIGH);
   SpiTransfer(data);
 }
 
-/**
-    @brief: Wait until the busy_pin goes HIGH
-*/
 void Epd::WaitUntilIdle(void) {
   while (DigitalRead(busy_pin) == 0) {     //0: busy, 1: idle
-    DelayMs(100);
+    delay(100);
   }
 }
 
-/**
-    @brief: module reset.
-            often used to awaken the module in deep sleep,
-            see Epd::Sleep();
-*/
 void Epd::Reset(void) {
-  DigitalWrite(reset_pin, LOW);                //module reset
-  DelayMs(200);
   DigitalWrite(reset_pin, HIGH);
-  DelayMs(200);
+  delay(200);
+  DigitalWrite(reset_pin, LOW);                //module reset
+  delay(200);
+  DigitalWrite(reset_pin, HIGH);
+  delay(200);
 }
 
 void Epd::Clear(void)
 {
   SendCommand(DATA_START_TRANSMISSION_1);
 
-  for (long y = 0; y <height; y++) {
-    for (long x = 0; x <width/2; x++) {
-      SendData(0x33);
-    }
+  int remaining = Size();
+
+  while (remaining > 0) {
+    SendData(0x33);
+    SendData(0x33);
+    SendData(0x33);
+    SendData(0x33);
+
+    remaining--;
   }
 
   SendCommand(DISPLAY_REFRESH);
-  DelayMs(100);
+  delay(100);
   WaitUntilIdle();
 }
 
-void Epd::DisplayFrame(const unsigned char* frame_buffer) {
-  unsigned char pixels;
-  bool left, right;
-  
+int Epd::Size(void) {
+  return height * (width / 8);
+}
+
+#define hasBit(v, idx) (v & (1 << idx)) > 0
+#define pairOfPixels(v, idx) hasBit(v, idx) ? (hasBit(v, idx+1) ? 0x33 : 0x30) : (hasBit(v, idx+1) ? 0x03 : 0x00)
+
+void Epd::DisplayStream(Stream* stream) {
+  unsigned char imageBuffer[width/8];
+
   SendCommand(DATA_START_TRANSMISSION_1);
 
-  int row = width/8;
-  
-  for (long y = 0; y < height; y++) {
-    for (long x = 0; x < row; x++) {
-      pixels = frame_buffer[x+(y*row)];
-      
-      for (short shift = 0; shift < 8; shift++) {
-        left = (pixels & (1 << shift)) > 0;
-        shift++;
-        right = (pixels & (1 << shift)) > 0;
+  int remaining = Size();
 
-        if (left) {
-          if (right) {
-            SendData(0x33);
-          } else { 
-            SendData(0x30);
-          }
-        } else {
-          if (right) {
-            SendData(0x03);
-          } else {
-            SendData(0x00);
-          }
-        }
+  unsigned char pixels;
+
+  while (remaining > 0) {
+    const int count = stream->readBytes(imageBuffer, sizeof(imageBuffer));
+
+    if (count > 0) {
+      remaining -= count;
+
+      for (int x = 0; x < count; x++) {
+        pixels = imageBuffer[x];
+
+        SendData(pairOfPixels(pixels, 0));
+        SendData(pairOfPixels(pixels, 2));
+        SendData(pairOfPixels(pixels, 4));
+        SendData(pairOfPixels(pixels, 6));
       }
+    } else {
+      break;
     }
   }
 
+  while (remaining > 0) {
+    SendData(0x33);
+    SendData(0x33);
+    SendData(0x33);
+    SendData(0x33);
+
+    remaining--;
+  }
+
   SendCommand(DISPLAY_REFRESH);
-  DelayMs(100);
+  delay(100);
   WaitUntilIdle();
 }
 
-/**
-    @brief: After this command is transmitted, the chip would enter the
-            deep-sleep mode to save power.
-            The deep sleep mode would return to standby by hardware reset.
-            The only one parameter is a check code, the command would be
-            executed if check code = 0xA5.
-            You can use EPD_Reset() to awaken
-*/
 void Epd::Sleep(void) {
   SendCommand(POWER_OFF);
   WaitUntilIdle();
   SendCommand(DEEP_SLEEP);
   SendData(0xa5);
 }
-
-/* END OF FILE */
